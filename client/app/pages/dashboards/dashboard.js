@@ -5,29 +5,6 @@ import template from './dashboard.html';
 import shareDashboardTemplate from './share-dashboard.html';
 import './dashboard.less';
 
-function isWidgetPositionChanged(oldPosition, newPosition) {
-  const fields = ['col', 'row', 'sizeX', 'sizeY', 'autoHeight'];
-  oldPosition = _.pick(oldPosition, fields);
-  newPosition = _.pick(newPosition, fields);
-  return !!_.find(fields, key => newPosition[key] !== oldPosition[key]);
-}
-
-function collectWidgetPositions(widgets) {
-  return _.chain(widgets)
-    .map(widget => [widget.id, _.clone(widget.options.position)])
-    .object()
-    .value();
-}
-
-function getWidgetsWithChangedPositions(widgets, savedPositions) {
-  return _.filter(widgets, (widget) => {
-    const savedPosition = savedPositions[widget.id];
-    if (!_.isObject(savedPosition)) {
-      return true;
-    }
-    return isWidgetPositionChanged(savedPosition, widget.options.position);
-  });
-}
 
 function DashboardCtrl(
   $rootScope,
@@ -46,22 +23,17 @@ function DashboardCtrl(
   toastr,
 ) {
   this.saveInProgress = false;
-
-  // This variable should always be in sync with widgets
-  let savedWidgetPositions = {};
-
-  const saveDashboardLayout = (widgets) => {
+  const saveDashboardLayout = () => {
     if (!this.dashboard.canEdit()) {
       return;
     }
-
     this.saveInProgress = true;
     const showMessages = true; // this.layoutEditing;
     // Temporarily disable grid editing (but allow user to use UI controls)
     this.dashboardGridOptions.draggable.enabled = false;
     this.dashboardGridOptions.resizable.enabled = false;
     return $q
-      .all(_.map(widgets, widget => widget.$save()))
+      .all(_.map(this.dashboard.widgets, widget => widget.$save()))
       .then(() => {
         if (showMessages) {
           toastr.success('Changes saved.');
@@ -90,7 +62,6 @@ function DashboardCtrl(
       enabled: false,
     },
   });
-
   this.isFullscreen = false;
   this.refreshRate = null;
   this.isGridDisabled = false;
@@ -209,8 +180,6 @@ function DashboardCtrl(
           $location.search('edit', null);
           this.editLayout(true);
         }
-
-        savedWidgetPositions = collectWidgetPositions(dashboard.widgets);
       },
       (rejection) => {
         const statusGroup = Math.floor(rejection.status / 100);
@@ -263,26 +232,26 @@ function DashboardCtrl(
       if (enableEditing) {
         if (!this.layoutEditing) {
           // Save current positions of widgets
-          savedWidgetPositions = collectWidgetPositions(this.dashboard.widgets);
+          _.each(this.dashboard.widgets, (widget) => {
+            widget.$savedPosition = _.clone(widget.options.position);
+          });
         }
       } else {
         if (applyChanges) {
-          const changedWidgets = getWidgetsWithChangedPositions(
-            this.dashboard.widgets,
-            savedWidgetPositions,
-          );
-          saveDashboardLayout(changedWidgets).finally(() => {
-            savedWidgetPositions = collectWidgetPositions(this.dashboard.widgets);
+          // Clear saved data and save layout
+          _.each(this.dashboard.widgets, (widget) => {
+            widget.$savedPosition = undefined;
           });
+          saveDashboardLayout();
         } else {
           // Revert changes
           _.each(this.dashboard.widgets, (widget) => {
-            if (_.isObject(savedWidgetPositions[widget.id])) {
-              widget.options.position = savedWidgetPositions[widget.id];
+            if (_.isObject(widget.$savedPosition)) {
+              widget.options.position = widget.$savedPosition;
             }
+            widget.$savedPosition = undefined;
           });
         }
-        savedWidgetPositions = collectWidgetPositions(this.dashboard.widgets);
       }
 
       this.layoutEditing = enableEditing;
@@ -317,6 +286,7 @@ function DashboardCtrl(
     collectFilters(this.dashboard, false);
   };
 
+
   this.addWidget = () => {
     $uibModal
       .open({
@@ -327,14 +297,19 @@ function DashboardCtrl(
       })
       .result.then(() => {
         this.extractGlobalParameters();
-        // Save position of newly added widget (but not entire layout)
-        const widget = _.last(this.dashboard.widgets);
-        if (_.isObject(widget)) {
-          return widget.$save().then(() => {
-            if (this.layoutEditing) {
-              savedWidgetPositions[widget.id] = _.clone(widget.options.position);
-            }
-          });
+        if (this.layoutEditing) {
+          // Save position of newly added widget (but not entire layout)
+          const widget = _.last(this.dashboard.widgets);
+          if (_.isObject(widget)) {
+            return widget.$save().then(() => {
+              if (this.layoutEditing) {
+                widget.$savedPosition = _.clone(widget.options.position);
+              }
+            });
+          }
+        } else {
+          // Update entire layout
+          return saveDashboardLayout();
         }
       });
   };
@@ -342,17 +317,7 @@ function DashboardCtrl(
   this.removeWidget = () => {
     this.extractGlobalParameters();
     if (!this.layoutEditing) {
-      // We need to wait a bit for `angular-gridster` before it updates widgets,
-      // and only then save new layout
-      $timeout(() => {
-        const changedWidgets = getWidgetsWithChangedPositions(
-          this.dashboard.widgets,
-          savedWidgetPositions,
-        );
-        saveDashboardLayout(changedWidgets).finally(() => {
-          savedWidgetPositions = collectWidgetPositions(this.dashboard.widgets);
-        });
-      }, 50);
+      saveDashboardLayout();
     }
   };
 

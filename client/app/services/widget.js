@@ -103,12 +103,8 @@ function Widget($resource, $http, Query, Visualization, dashboardGridOptions) {
     widget.options.position = extend(
       {},
       visualizationOptions,
-      pick(widget.options.position, ['col', 'row', 'sizeX', 'sizeY', 'autoHeight']),
+      pick(widget.options.position, ['col', 'row', 'sizeX', 'sizeY']),
     );
-
-    if (widget.options.position.sizeY < 0) {
-      widget.options.position.autoHeight = true;
-    }
 
     return new WidgetResource(widget);
   }
